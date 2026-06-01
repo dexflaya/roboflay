@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>ROBOVERSE</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;overflow:hidden;font-family:'Courier New',monospace;color:#fff}
+canvas{display:block}
+#ui{position:fixed;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10}
+#hud-top{position:absolute;top:10px;left:10px;font-size:12px;text-shadow:0 0 8px currentColor}
+#bars{position:absolute;bottom:10px;left:10px;display:flex;flex-direction:column;gap:4px}
+.bar-wrap{display:flex;align-items:center;gap:6px;font-size:10px}
+.bar{width:160px;height:10px;background:#111;border:1px solid #333;border-radius:3px;overflow:hidden}
+.bar-fill{height:100%;transition:width .2s;border-radius:3px}
+#hp-fill{background:linear-gradient(90deg,#f00,#f55);box-shadow:0 0 6px #f00}
+#xp-fill{background:linear-gradient(90deg,#0f0,#5f5);box-shadow:0 0 6px #0f0}
+#en-fill{background:linear-gradient(90deg,#ff0,#ff8);box-shadow:0 0 6px #ff0}
+#minimap{position:absolute;bottom:10px;right:10px;width:100px;height:100px;border:1px solid #444;background:#111;border-radius:4px}
+#kills{position:absolute;top:10px;right:10px;font-size:11px;text-align:right;text-shadow:0 0 6px #0ff}
+#overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.92);z-index:20;display:flex;align-items:center;justify-content:center;pointer-events:all}
+#select-screen{text-align:center}
+#select-screen h1{font-size:42px;letter-spacing:8px;margin-bottom:4px;background:linear-gradient(90deg,#f60,#0cf,#ff0);-webkit-background-clip:text;-webkit-text-fill-color:transparent}
+#select-screen p{color:#888;margin-bottom:30px;font-size:13px}
+#robots-row{display:flex;gap:24px;justify-content:center;flex-wrap:wrap}
+.robot-card{border:2px solid #333;border-radius:10px;padding:18px 22px;cursor:pointer;transition:all .2s;min-width:160px;position:relative}
+.robot-card:hover{transform:scale(1.06)}
+.robot-card canvas{display:block;margin:0 auto 10px}
+.robot-card h3{font-size:14px;margin-bottom:6px}
+.robot-card .stats{font-size:10px;color:#aaa;line-height:1.7}
+.robot-card .biome-tag{font-size:9px;opacity:.7;margin-top:6px}
+#evo-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.88);z-index:20;display:none;align-items:center;justify-content:center;pointer-events:all}
+#evo-screen{text-align:center}
+#evo-screen h2{font-size:28px;letter-spacing:4px;margin-bottom:6px;color:#0ff;text-shadow:0 0 12px #0ff}
+#evo-screen p{color:#888;margin-bottom:24px;font-size:12px}
+#evo-choices{display:flex;gap:16px;justify-content:center}
+.evo-card{border:2px solid #555;border-radius:8px;padding:14px 18px;cursor:pointer;transition:all .2s;min-width:130px}
+.evo-card:hover{transform:scale(1.08)}
+.evo-card canvas{display:block;margin:0 auto 8px}
+.evo-card h4{font-size:13px;margin-bottom:4px}
+.evo-card p{font-size:10px;color:#aaa}
+#msg{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:14px;pointer-events:none;opacity:0;transition:opacity .3s}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="ui">
+  <div id="hud-top">
+    <span id="pname"></span> &nbsp;|&nbsp; <span id="rname"></span> &nbsp;|&nbsp; Ур. <span id="lvl">1</span>
+  </div>
+  <div id="bars">
+    <div class="bar-wrap"><span style="color:#f55">HP</span><div class="bar"><div class="bar-fill" id="hp-fill" style="width:100%"></div></div></div>
+    <div class="bar-wrap"><span style="color:#5f5">XP</span><div class="bar"><div class="bar-fill" id="xp-fill" style="width:0%"></div></div></div>
+    <div class="bar-wrap"><span style="color:#ff5">EN</span><div class="bar"><div class="bar-fill" id="en-fill" style="width:100%"></div></div></div>
+  </div>
+  <canvas id="minimap" width="100" height="100"></canvas>
+  <div id="kills">Убийств: <span id="killcount">0</span><br>Съедено: <span id="eatcount">0</span></div>
+  <div id="msg"></div>
+</div>
+
+<div id="overlay">
+  <div id="select-screen">
+    <h1>ROBOVERSE</h1>
+    <p>Выберите робота и начните эволюцию</p>
+    <div id="robots-row"></div>
+  </div>
+</div>
+
+<div id="evo-overlay">
+  <div id="evo-screen">
+    <h2>⚡ ЭВОЛЮЦИЯ ⚡</h2>
+    <p>Выберите путь развития</p>
+    <div id="evo-choices"></div>
+  </div>
+</div>
+
+<script>
+const gc=document.getElementById('game'),gctx=gc.getContext('2d');
+const mm=document.getElementById('minimap'),mctx=mm.getContext('2d');
+gc.width=window.innerWidth;gc.height=window.innerHeight;
+window.addEventListener('resize',()=>{gc.width=window.innerWidth;gc.height=window.innerHeight;});
+
+// ---- ROBOT DEFINITIONS ----
+const EVOS={
+  pyrox:[
+    {name:'Pyrox',color:'#ff4400',size:16,speed:2.8,atk:12,def:4,desc:'Базовый лавовый робот'},
+    {name:'MagmaBot',color:'#ff6600',size:20,speed:2.6,atk:18,def:7,desc:'Магма внутри'},
+    {name:'InfernoMech',color:'#ff2200',size:25,speed:2.4,atk:26,def:10,desc:'Механизм ада'},
+    {name:'VolcanoTitan',color:'#ff0000',size:32,speed:2.0,atk:38,def:15,desc:'Повелитель вулканов'}
+  ],
+  cryobot:[
+    {name:'Cryobot',color:'#00cfff',size:16,speed:3.0,atk:10,def:5,desc:'Ледяной старт'},
+    {name:'FrostDrone',color:'#88eeff',size:20,speed:2.8,atk:15,def:9,desc:'Дрон морозов'},
+    {name:'Blizzard',color:'#aaffff',size:25,speed:2.5,atk:22,def:13,desc:'Метель'},
+    {name:'AbsoluteCore',color:'#ffffff',size:32,speed:2.2,atk:35,def:20,desc:'Абсолютный ноль'}
+  ],
+  voltek:[
+    {name:'Voltek',color:'#ffee00',size:16,speed:3.2,atk:11,def:3,desc:'Электрический боец'},
+    {name:'ThunderBot',color:'#ffcc00',size:20,speed:3.0,atk:17,def:6,desc:'Грозовой бот'},
+    {name:'StormSurge',color:'#ff9900',size:26,speed:2.7,atk:25,def:9,desc:'Штормовой всплеск'},
+    {name:'OmegaLightning',color:'#ffffff',size:33,speed:2.4,atk:40,def:12,desc:'Омега-молния'}
+  ]
+};
+
+const BIOMES=[
+  {name:'Лавовый',bg:'#1a0500',accent:'#ff4400',food:'#ff8800',grid:'#330800'},
+  {name:'Ледяной',bg:'#000d1a',accent:'#00cfff',food:'#88eeff',grid:'#001433'},
+  {name:'Штормовой',bg:'#0a0a00',accent:'#ffee00',food:'#ffcc00',grid:'#1a1a00'}
+];
+const BIOME_BOUNDS=[
+  {x:0,y:0,w:1333,h:2000},
+  {x:1333,y:0,w:1334,h:2000},
+  {x:2667,y:0,w:1333,h:2000}
+];
+const WORLD_W=4000,WORLD_H=2000;
+
+// Enemy templates per biome
+const ENEMY_TYPES=[
+  [{name:'LavaScout',color:'#cc3300',size:12,speed:1.5,hp:30,atk:8,xp:15},{name:'MagmaGuard',color:'#ff5500',size:18,speed:1.2,hp:60,atk:14,xp:30},{name:'InfernoBoss',color:'#ff0000',size:28,speed:1.0,hp:150,atk:25,xp:80,boss:true}],
+  [{name:'IcePawn',color:'#66ccff',size:12,speed:1.4,hp:28,atk:7,xp:14},{name:'FrostKnight',color:'#aaeeff',size:18,speed:1.1,hp:55,atk:13,xp:28},{name:'GlacierBoss',color:'#ffffff',size:28,speed:0.9,hp:140,atk:23,xp:75,boss:true}],
+  [{name:'StormDrone',color:'#ddcc00',size:12,speed:1.7,hp:25,atk:9,xp:16},{name:'ThunderElite',color:'#ffee44',size:18,speed:1.3,hp:50,atk:15,xp:32},{name:'OmegaBoss',color:'#fff700',size:28,speed:1.1,hp:160,atk:28,xp:85,boss:true}]
+];
+
+let G={
+  running:false,
+  playerType:null,
+  evoLine:null,
+  evoIdx:0,
+  px:400,py:400,
+  mx:0,my:0,
+  camX:0,camY:0,
+  hp:100,maxHp:100,
+  xp:0,xpNext:100,
+  energy:100,maxEnergy:100,
+  level:1,
+  kills:0,eats:0,
+  foods:[],enemies:[],particles:[],
+  shakeT:0,
+  dashCd:0,
+  atkCd:0,
+  spawnTimer:0,
+  foodTimer:0,
+  biomeIdx:0
+};
+
+function getBiomeAt(wx,wy){
+  for(let i=0;i<BIOME_BOUNDS.length;i++){
+    let b=BIOME_BOUNDS[i];
+    if(wx>=b.x&&wx<b.x+b.w&&wy>=b.y&&wy<b.y+b.h)return i;
+  }
+  return 0;
+}
+
+// ---- DRAW ROBOT ----
+function drawRobot(ctx,x,y,evoLine,evoIdx,size,glow,angle){
+  let ev=EVOS[evoLine][evoIdx];
+  let c=ev.color;
+  ctx.save();
+  ctx.translate(x,y);
+  if(angle)ctx.rotate(angle);
+  if(glow){ctx.shadowColor=c;ctx.shadowBlur=18;}
+  ctx.strokeStyle=c;ctx.lineWidth=2;
+  ctx.fillStyle=c+'33';
+
+  // Draw shape based on evo
+  if(evoLine==='pyrox'){
+    // Hexagon body
+    ctx.beginPath();
+    for(let i=0;i<6;i++){let a=i*Math.PI/3-Math.PI/6;ctx.lineTo(Math.cos(a)*size,Math.sin(a)*size);}
+    ctx.closePath();ctx.fill();ctx.stroke();
+    // Eye
+    ctx.fillStyle=c;ctx.beginPath();ctx.arc(size*.3,0,size*.18,0,Math.PI*2);ctx.fill();
+    if(evoIdx>=2){
+      // Wings
+      ctx.strokeStyle=c+'aa';
+      ctx.beginPath();ctx.moveTo(-size*.5,-size*.3);ctx.lineTo(-size*1.2,-size*.8);ctx.lineTo(-size*.8,0);ctx.closePath();ctx.stroke();
+      ctx.beginPath();ctx.moveTo(-size*.5,size*.3);ctx.lineTo(-size*1.2,size*.8);ctx.lineTo(-size*.8,0);ctx.closePath();ctx.stroke();
+    }
+  } else if(evoLine==='cryobot'){
+    // Diamond body
+    ctx.beginPath();ctx.moveTo(0,-size);ctx.lineTo(size*.7,0);ctx.lineTo(0,size);ctx.lineTo(-size*.7,0);ctx.closePath();
+    ctx.fill();ctx.stroke();
+    // Cross inside
+    ctx.strokeStyle=c;ctx.lineWidth=1.5;
+    ctx.beginPath();ctx.moveTo(0,-size*.6);ctx.lineTo(0,size*.6);ctx.moveTo(-size*.4,0);ctx.lineTo(size*.4,0);ctx.stroke();
+    if(evoIdx>=2){
+      // Snowflake arms
+      for(let i=0;i<6;i++){
+        let a=i*Math.PI/3;
+        ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(Math.cos(a)*size*1.3,Math.sin(a)*size*1.3);ctx.stroke();
+      }
+    }
+  } else {
+    // Triangle body (voltek)
+    ctx.beginPath();ctx.moveTo(size,0);ctx.lineTo(-size*.6,size*.8);ctx.lineTo(-size*.6,-size*.8);ctx.closePath();
+    ctx.fill();ctx.stroke();
+    // Zigzag
+    ctx.strokeStyle=c;ctx.lineWidth=2;
+    ctx.beginPath();ctx.moveTo(-size*.3,-size*.3);ctx.lineTo(size*.1,0);ctx.lineTo(-size*.3,size*.3);ctx.stroke();
+    if(evoIdx>=2){
+      // Lightning bolts
+      ctx.strokeStyle='#fff8';
+      ctx.beginPath();ctx.moveTo(-size*.8,-size*.6);ctx.lineTo(-size*.3,-size*.1);ctx.lineTo(-size*.6,size*.1);ctx.lineTo(-size*.1,size*.6);ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+function drawFood(ctx,x,y,biome,size){
+  let b=BIOMES[biome];
+  ctx.save();
+  ctx.shadowColor=b.food;ctx.shadowBlur=8;
+  ctx.fillStyle=b.food;
+  if(biome===0){// lava crystal
+    ctx.beginPath();ctx.moveTo(x,y-size);ctx.lineTo(x+size*.6,y+size*.5);ctx.lineTo(x-size*.6,y+size*.5);ctx.closePath();ctx.fill();
+  }else if(biome===1){// ice shard
+    ctx.beginPath();ctx.moveTo(x,y-size);ctx.lineTo(x+size*.4,y);ctx.lineTo(x,y+size);ctx.lineTo(x-size*.4,y);ctx.closePath();ctx.fill();
+  }else{// energy cell
+    ctx.beginPath();ctx.arc(x,y,size*.7,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#fff4';ctx.lineWidth=2;ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawEnemyShape(ctx,x,y,et,size){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.strokeStyle=et.color;ctx.lineWidth=2;
+  ctx.fillStyle=et.color+'44';
+  ctx.shadowColor=et.color;ctx.shadowBlur=et.boss?14:6;
+  if(et.boss){
+    ctx.beginPath();for(let i=0;i<8;i++){let a=i*Math.PI/4;ctx.lineTo(Math.cos(a)*size,Math.sin(a)*size);}
+    ctx.closePath();ctx.fill();ctx.stroke();
+    ctx.strokeStyle='#fff4';ctx.lineWidth=1;
+    ctx.beginPath();ctx.arc(0,0,size*.6,0,Math.PI*2);ctx.stroke();
+  } else {
+    ctx.beginPath();ctx.rect(-size,-size,size*2,size*2);ctx.fill();ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ---- PARTICLE ----
+function spawnParticles(wx,wy,color,count){
+  for(let i=0;i<count;i++){
+    let a=Math.random()*Math.PI*2,sp=1+Math.random()*3;
+    G.particles.push({x:wx,y:wy,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:30+Math.random()*30,color,r:2+Math.random()*3});
+  }
+}
+
+// ---- SPAWN FOOD ----
+function spawnFood(){
+  let biome=Math.floor(Math.random()*3);
+  let b=BIOME_BOUNDS[biome];
+  G.foods.push({
+    x:b.x+50+Math.random()*(b.w-100),
+    y:50+Math.random()*(WORLD_H-100),
+    biome,size:5+Math.random()*5,xp:8+Math.floor(Math.random()*12)
+  });
+}
+
+// ---- SPAWN ENEMY ----
+function spawnEnemy(){
+  let biome=Math.floor(Math.random()*3);
+  let b=BIOME_BOUNDS[biome];
+  // Boss chance
+  let tier=G.level<3?0:G.level<6?1:2;
+  let roll=Math.random();
+  let etArr=ENEMY_TYPES[biome];
+  let et;
+  if(roll<0.08&&tier>=2)et={...etArr[2]};
+  else if(roll<0.35&&tier>=1)et={...etArr[1]};
+  else et={...etArr[0]};
+  et={...et};
+  let mult=1+G.level*.08;
+  et.hp*=mult;et.maxHp=et.hp;et.atk*=mult;
+  let ex=b.x+50+Math.random()*(b.w-100);
+  let ey=50+Math.random()*(WORLD_H-100);
+  // Don't spawn too close to player
+  if(Math.hypot(ex-G.px,ey-G.py)<200){ex+=200;}
+  G.enemies.push({...et,x:ex,y:ey,biome,angle:0,state:'patrol',patrolTarget:{x:ex+Math.random()*200-100,y:ey+Math.random()*200-100},chaseTimer:0});
+}
+
+// ---- INIT ----
+function initGame(type){
+  G.playerType=type;
+  G.evoLine=type;
+  G.evoIdx=0;
+  let biomeMap={pyrox:0,cryobot:1,voltek:2};
+  G.biomeIdx=biomeMap[type];
+  let b=BIOME_BOUNDS[G.biomeIdx];
+  G.px=b.x+b.w/2;G.py=WORLD_H/2;
+  G.hp=100;G.maxHp=100;G.xp=0;G.xpNext=80;G.energy=100;G.level=1;G.kills=0;G.eats=0;
+  G.foods=[];G.enemies=[];G.particles=[];
+  for(let i=0;i<60;i++)spawnFood();
+  for(let i=0;i<20;i++)spawnEnemy();
+  G.running=true;
+  document.getElementById('overlay').style.display='none';
+  document.getElementById('pname').textContent='Player';
+  updateHudName();
+}
+
+function updateHudName(){
+  let ev=EVOS[G.evoLine][G.evoIdx];
+  document.getElementById('rname').textContent=ev.name;
+  document.getElementById('lvl').textContent=G.level;
+}
+
+// ---- EVOLUTION ----
+function offerEvolution(){
+  G.running=false;
+  let ov=document.getElementById('evo-overlay');
+  ov.style.display='flex';
+  let ch=document.getElementById('evo-choices');
+  ch.innerHTML='';
+  let nextIdx=G.evoIdx+1;
+  if(nextIdx>=EVOS[G.evoLine].length){
+    // Max evolution
+    G.running=true;ov.style.display='none';showMsg('Максимальная эволюция!');return;
+  }
+  let lines=['pyrox','cryobot','voltek'];
+  // Offer own line + possible cross
+  let options=[G.evoLine];
+  let cross=lines.filter(l=>l!==G.evoLine&&EVOS[l].length>nextIdx);
+  if(cross.length>0&&Math.random()<.4)options.push(cross[Math.floor(Math.random()*cross.length)]);
+  options.forEach(line=>{
+    let ev=EVOS[line][nextIdx];
+    let card=document.createElement('div');card.className='evo-card';
+    let colors={pyrox:'#ff4400',cryobot:'#00cfff',voltek:'#ffee00'};
+    card.style.borderColor=colors[line];
+    let c2=document.createElement('canvas');c2.width=70;c2.height=70;
+    let cx2=c2.getContext('2d');
+    drawRobot(cx2,35,35,line,nextIdx,ev.size*.9,true,0);
+    card.appendChild(c2);
+    let h4=document.createElement('h4');h4.textContent=ev.name;h4.style.color=colors[line];
+    let p=document.createElement('p');p.textContent=ev.desc;
+    let p2=document.createElement('p');
+    let prevEv=EVOS[G.evoLine][G.evoIdx];
+    p2.textContent=`ATK ${prevEv.atk}→${ev.atk} DEF ${prevEv.def}→${ev.def}`;
+    card.appendChild(h4);card.appendChild(p);card.appendChild(p2);
+    card.onclick=()=>{
+      G.evoLine=line;G.evoIdx=nextIdx;
+      let ev2=EVOS[line][nextIdx];
+      G.maxHp=100+ev2.def*4;G.hp=G.maxHp;
+      spawnParticles(G.px,G.py,colors[line],30);
+      G.shakeT=20;
+      ov.style.display='none';G.running=true;
+      updateHudName();
+      showMsg('Эволюция: '+ev2.name+'!');
+    };
+    ch.appendChild(card);
+  });
+}
+
+function showMsg(t){
+  let m=document.getElementById('msg');m.textContent=t;m.style.opacity=1;
+  setTimeout(()=>m.style.opacity=0,2000);
+}
+
+// ---- UPDATE ----
+function update(){
+  if(!G.running)return;
+  let ev=EVOS[G.evoLine][G.evoIdx];
+  let spd=ev.speed;
+
+  // Biome effect
+  let playerBiome=getBiomeAt(G.px,G.py);
+  let nativeBiome={pyrox:0,cryobot:1,voltek:2}[G.evoLine];
+  if(playerBiome!==nativeBiome){
+    if(playerBiome===1&&G.evoLine==='pyrox')spd*=.6;
+    if(playerBiome===0&&G.evoLine==='cryobot'){G.hp-=.04;spd*=.75;}
+    if(playerBiome!==nativeBiome&&G.evoLine==='voltek')spd*=.85;
+  }
+
+  // Move toward mouse
+  let cx=gc.width/2,cy=gc.height/2;
+  let dx=G.mx-cx,dy=G.my-cy;
+  let dist=Math.hypot(dx,dy);
+  if(dist>8){
+    let nx=dx/dist,ny=dy/dist;
+    G.px=Math.max(ev.size,Math.min(WORLD_W-ev.size,G.px+nx*spd*2));
+    G.py=Math.max(ev.size,Math.min(WORLD_H-ev.size,G.py+ny*spd*2));
+  }
+  G.camX=G.px-gc.width/2;
+  G.camY=G.py-gc.height/2;
+
+  // Energy regen
+  G.energy=Math.min(G.maxEnergy,G.energy+.05);
+  if(G.dashCd>0)G.dashCd--;
+  if(G.atkCd>0)G.atkCd--;
+
+  // Spawn timers
+  G.spawnTimer++;G.foodTimer++;
+  if(G.spawnTimer>180){G.spawnTimer=0;if(G.enemies.length<35)spawnEnemy();}
+  if(G.foodTimer>90){G.foodTimer=0;if(G.foods.length<70)spawnFood();}
+
+  // Food collision
+  for(let i=G.foods.length-1;i>=0;i--){
+    let f=G.foods[i];
+    if(Math.hypot(f.x-G.px,f.y-G.py)<ev.size+f.size){
+      G.xp+=f.xp;G.eats++;
+      G.energy=Math.min(G.maxEnergy,G.energy+12);
+      spawnParticles(f.x,f.y,BIOMES[f.biome].food,6);
+      G.foods.splice(i,1);
+      document.getElementById('eatcount').textContent=G.eats;
+      checkLevelUp();
+    }
+  }
+
+  // Enemy AI + collision
+  for(let i=G.enemies.length-1;i>=0;i--){
+    let e=G.enemies[i];
+    let d=Math.hypot(e.x-G.px,e.y-G.py);
+    // State machine
+    if(d<250)e.state='chase';
+    else if(e.state==='chase'&&d>350)e.state='patrol';
+    if(e.state==='chase'){
+      let nx=(G.px-e.x)/d,ny=(G.py-e.y)/d;
+      e.x+=nx*e.speed;e.y+=ny*e.speed;
+      e.angle=Math.atan2(ny,nx);
+    } else {
+      let pd=Math.hypot(e.patrolTarget.x-e.x,e.patrolTarget.y-e.y);
+      if(pd<10){e.patrolTarget={x:e.x+Math.random()*200-100,y:e.y+Math.random()*200-100};}
+      else{e.x+=(e.patrolTarget.x-e.x)/pd*e.speed*.5;e.y+=(e.patrolTarget.y-e.y)/pd*e.speed*.5;}
+    }
+    e.x=Math.max(10,Math.min(WORLD_W-10,e.x));e.y=Math.max(10,Math.min(WORLD_H-10,e.y));
+    // Attack player
+    if(d<ev.size+e.size+4&&G.atkCd===0){
+      G.hp-=e.atk*.08;G.shakeT=8;
+      if(G.hp<=0){G.hp=0;showMsg('Вы уничтожены!');setTimeout(()=>{G.running=false;document.getElementById('overlay').style.display='flex';},1500);}
+    }
+    // Player attacks enemy
+    if(d<ev.size+e.size+10&&G.atkCd===0){
+      e.hp-=ev.atk*.15;
+      if(e.hp<=0){
+        G.xp+=e.xp;G.kills++;
+        spawnParticles(e.x,e.y,e.color,12);
+        G.enemies.splice(i,1);
+        document.getElementById('killcount').textContent=G.kills;
+        checkLevelUp();
+        G.atkCd=18;
+      }
+    }
+  }
+
+  // Particles
+  for(let i=G.particles.length-1;i>=0;i--){
+    let p=G.particles[i];
+    p.x+=p.vx;p.y+=p.vy;p.vx*=.93;p.vy*=.93;p.life--;p.r*=.97;
+    if(p.life<=0)G.particles.splice(i,1);
+  }
+
+  if(G.shakeT>0)G.shakeT--;
+  updateHUD();
+}
+
+function checkLevelUp(){
+  while(G.xp>=G.xpNext){
+    G.xp-=G.xpNext;G.level++;
+    G.xpNext=Math.floor(G.xpNext*1.35);
+    updateHudName();
+    showMsg('Уровень '+G.level+'!');
+    if(G.level%3===0)offerEvolution();
+  }
+}
+
+function updateHUD(){
+  let ev=EVOS[G.evoLine][G.evoIdx];
+  document.getElementById('hp-fill').style.width=(G.hp/G.maxHp*100)+'%';
+  document.getElementById('xp-fill').style.width=(G.xp/G.xpNext*100)+'%';
+  document.getElementById('en-fill').style.width=(G.energy/G.maxEnergy*100)+'%';
+}
+
+// ---- DRAW ----
+function drawBiomeBg(ctx){
+  for(let bi=0;bi<3;bi++){
+    let b=BIOME_BOUNDS[bi];
+    let bm=BIOMES[bi];
+    let sx=b.x-G.camX,sy=b.y-G.camY;
+    ctx.fillStyle=bm.bg;
+    ctx.fillRect(sx,sy,b.w,b.h);
+    // Grid pattern
+    ctx.strokeStyle=bm.grid;ctx.lineWidth=1;
+    let gs=60;
+    for(let gx=sx;gx<sx+b.w;gx+=gs){
+      ctx.beginPath();ctx.moveTo(gx,sy);ctx.lineTo(gx,sy+b.h);ctx.stroke();
+    }
+    for(let gy=sy;gy<sy+b.h;gy+=gs){
+      ctx.beginPath();ctx.moveTo(sx,gy);ctx.lineTo(sx+b.w,gy);ctx.stroke();
+    }
+    // Biome label
+    ctx.fillStyle=bm.accent+'44';ctx.font='bold 48px Courier New';ctx.textAlign='center';
+    ctx.fillText(bm.name,sx+b.w/2,sy+b.h/2);
+    ctx.textAlign='left';
+  }
+  // Border lines between biomes
+  ctx.strokeStyle='#ffffff22';ctx.lineWidth=2;ctx.setLineDash([8,8]);
+  ctx.beginPath();ctx.moveTo(BIOME_BOUNDS[0].w-G.camX,0);ctx.lineTo(BIOME_BOUNDS[0].w-G.camX,gc.height);ctx.stroke();
+  ctx.beginPath();ctx.moveTo(BIOME_BOUNDS[0].w+BIOME_BOUNDS[1].w-G.camX,0);ctx.lineTo(BIOME_BOUNDS[0].w+BIOME_BOUNDS[1].w-G.camX,gc.height);ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function render(){
+  let ox=0,oy=0;
+  if(G.shakeT>0){ox=(Math.random()-.5)*6;oy=(Math.random()-.5)*6;}
+  gctx.save();gctx.translate(ox,oy);
+  gctx.clearRect(-10,-10,gc.width+20,gc.height+20);
+
+  if(!G.running&&document.getElementById('overlay').style.display!=='none'){gctx.restore();return;}
+
+  drawBiomeBg(gctx);
+
+  // Foods
+  for(let f of G.foods)drawFood(gctx,f.x-G.camX,f.y-G.camY,f.biome,f.size);
+
+  // Enemies
+  for(let e of G.enemies){
+    let sx=e.x-G.camX,sy=e.y-G.camY;
+    if(sx>-60&&sx<gc.width+60&&sy>-60&&sy<gc.height+60){
+      drawEnemyShape(gctx,sx,sy,e,e.size);
+      // Enemy HP bar
+      let bw=e.size*2;
+      gctx.fillStyle='#333';gctx.fillRect(sx-bw/2,sy-e.size-8,bw,4);
+      gctx.fillStyle=e.color;gctx.fillRect(sx-bw/2,sy-e.size-8,bw*(e.hp/e.maxHp),4);
+    }
+  }
+
+  // Particles
+  for(let p of G.particles){
+    let sx=p.x-G.camX,sy=p.y-G.camY;
+    gctx.save();gctx.globalAlpha=p.life/60;
+    gctx.fillStyle=p.color;gctx.shadowColor=p.color;gctx.shadowBlur=6;
+    gctx.beginPath();gctx.arc(sx,sy,p.r,0,Math.PI*2);gctx.fill();
+    gctx.restore();
+  }
+
+  // Player
+  if(G.running){
+    let dx=G.mx-gc.width/2,dy=G.my-gc.height/2;
+    let angle=Math.atan2(dy,dx);
+    let ev=EVOS[G.evoLine][G.evoIdx];
+    drawRobot(gctx,gc.width/2,gc.height/2,G.evoLine,G.evoIdx,ev.size,true,angle);
+  }
+
+  gctx.restore();
+  drawMinimap();
+}
+
+function drawMinimap(){
+  mctx.clearRect(0,0,100,100);
+  mctx.fillStyle='#111';mctx.fillRect(0,0,100,100);
+  let scx=100/WORLD_W,scy=100/WORLD_H;
+  // Biomes
+  for(let bi=0;bi<3;bi++){
+    let b=BIOME_BOUNDS[bi];
+    mctx.fillStyle=BIOMES[bi].bg;
+    mctx.fillRect(b.x*scx,b.y*scy,b.w*scx,b.h*scy);
+  }
+  // Enemies
+  mctx.fillStyle='#f44';
+  for(let e of G.enemies)mctx.fillRect(e.x*scx-1,e.y*scy-1,2,2);
+  // Player
+  if(G.running){mctx.fillStyle='#0ff';mctx.fillRect(G.px*scx-2,G.py*scy-2,4,4);}
+  mctx.strokeStyle='#444';mctx.lineWidth=1;mctx.strokeRect(0,0,100,100);
+}
+
+// ---- SELECTION SCREEN ----
+function buildSelectScreen(){
+  let row=document.getElementById('robots-row');
+  let types=['pyrox','cryobot','voltek'];
+  let colors={pyrox:'#ff4400',cryobot:'#00cfff',voltek:'#ffee00'};
+  let icons={pyrox:'🔥',cryobot:'❄️',voltek:'⚡'};
+  types.forEach(t=>{
+    let ev=EVOS[t][0];
+    let card=document.createElement('div');card.className='robot-card';
+    card.style.borderColor=colors[t];card.style.boxShadow='0 0 18px '+colors[t]+'44';
+    let cv=document.createElement('canvas');cv.width=80;cv.height=80;
+    let cx2=cv.getContext('2d');
+    drawRobot(cx2,40,40,t,0,ev.size,true,0);
+    card.appendChild(cv);
+    let h3=document.createElement('h3');h3.textContent=icons[t]+' '+ev.name;h3.style.color=colors[t];
+    let stats=document.createElement('div');stats.className='stats';
+    stats.innerHTML=`Скорость: ${ev.speed}<br>Атака: ${ev.atk}<br>Защита: ${ev.def}`;
+    let biomeTag=document.createElement('div');biomeTag.className='biome-tag';biomeTag.style.color=colors[t];
+    biomeTag.textContent=BIOMES[{pyrox:0,cryobot:1,voltek:2}[t]].name+' биом';
+    card.appendChild(h3);card.appendChild(stats);card.appendChild(biomeTag);
+    card.onclick=()=>initGame(t);
+    row.appendChild(card);
+  });
+}
+
+// ---- INPUT ----
+gc.addEventListener('mousemove',e=>{G.mx=e.clientX;G.my=e.clientY;});
+window.addEventListener('keydown',e=>{
+  if(e.code==='Space'&&G.running&&G.energy>20&&G.dashCd===0){
+    e.preventDefault();
+    let dx=G.mx-gc.width/2,dy=G.my-gc.height/2;
+    let d=Math.hypot(dx,dy)||1;
+    G.px=Math.max(20,Math.min(WORLD_W-20,G.px+dx/d*80));
+    G.py=Math.max(20,Math.min(WORLD_H-20,G.py+dy/d*80));
+    G.energy-=20;G.dashCd=60;
+    spawnParticles(G.px,G.py,EVOS[G.evoLine][G.evoIdx].color,8);
+  }
+});
+gc.addEventListener('click',e=>{
+  if(!G.running)return;
+  if(G.energy>15&&G.dashCd===0){
+    let dx=e.clientX-gc.width/2,dy=e.clientY-gc.height/2;
+    let d=Math.hypot(dx,dy)||1;
+    G.px=Math.max(20,Math.min(WORLD_W-20,G.px+dx/d*60));
+    G.py=Math.max(20,Math.min(WORLD_H-20,G.py+dy/d*60));
+    G.energy-=12;G.dashCd=40;
+    spawnParticles(G.px,G.py,EVOS[G.evoLine][G.evoIdx].color,6);
+  }
+});
+
+// ---- LOOP ----
+function loop(){requestAnimationFrame(loop);update();render();}
+
+buildSelectScreen();
+loop();
+</script>
+</body>
+</html>
