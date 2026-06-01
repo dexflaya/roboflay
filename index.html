@@ -399,6 +399,7 @@ function update(){
     if(Math.hypot(f.x-G.px,f.y-G.py)<ev.size+f.size){
       G.xp+=f.xp;G.eats++;
       G.energy=Math.min(G.maxEnergy,G.energy+12);
+      G.hp=Math.min(G.maxHp,G.hp+3);
       spawnParticles(f.x,f.y,BIOMES[f.biome].food,6);
       G.foods.splice(i,1);
       document.getElementById('eatcount').textContent=G.eats;
